@@ -226,17 +226,18 @@ def main():
         st.caption("Lọc dữ liệu theo ngày hoặc theo tháng.")
 
     # Nội dung chính
-    # Hiển thị logo ở đầu trang
+    # Hiển thị logo ở đầu trang. Sử dụng tỷ lệ cột lớn hơn ở giữa để logo thực sự nằm giữa.
     possible_logo_paths = [Path('logo.png'), Path('/home/oai/share/logo.png')]
     logo_path = None
     for p in possible_logo_paths:
         if p.exists():
             logo_path = str(p)
             break
-    logo_cols = st.columns([1, 2, 1])
+    # Tạo 3 cột với tỷ lệ trọng số, cột giữa rộng hơn để căn giữa logo
+    logo_cols = st.columns([1, 6, 1])
     with logo_cols[1]:
         if logo_path:
-            st.image(logo_path, width=180)
+            st.image(logo_path, width=200)
         else:
             st.write("**Logo không tìm thấy.**")
     # Tiêu đề và mô tả
@@ -289,46 +290,44 @@ def main():
         return diff, percent
     # Hiển thị KPI nâng cao
     st.markdown("## 📌 Chỉ số tổng quan (YTD)")
-    k1, k2, k3, k4, k5, k6 = st.columns(6)
-    # Doanh thu
+    # Chia KPI thành hai hàng để tránh cắt bớt dữ liệu khi số quá dài
+    row1 = st.columns(3)
+    row2 = st.columns(3)
+    # Hàng 1: Doanh thu thuần, Tổng đơn hàng, Lợi nhuận gộp
     diff_rev, pct_rev = compute_delta(kpi_current['revenue'], kpi_prev['revenue'])
-    k1.metric(
-        "Doanh thu thuần", 
+    row1[0].metric(
+        "Doanh thu thuần",
         format_currency(kpi_current['revenue']),
         f"{diff_rev:,.0f} ₫ ({pct_rev:.1f}% )" if pct_rev is not None else "–"
     )
-    # Đơn hàng
     diff_orders, pct_orders = compute_delta(kpi_current['orders'], kpi_prev['orders'])
-    k2.metric(
-        "Tổng đơn hàng", 
+    row1[1].metric(
+        "Tổng đơn hàng",
         f"{int(kpi_current['orders']):,}",
         f"{diff_orders:,.0f} ({pct_orders:.1f}% )" if pct_orders is not None else "–"
     )
-    # Lợi nhuận gộp
     diff_profit, pct_profit = compute_delta(kpi_current['profit'], kpi_prev['profit'])
-    k3.metric(
-        "Lợi nhuận gộp", 
+    row1[2].metric(
+        "Lợi nhuận gộp",
         format_currency(kpi_current['profit']),
         f"{diff_profit:,.0f} ₫ ({pct_profit:.1f}% )" if pct_profit is not None else "–"
     )
-    # Biên lợi nhuận
+    # Hàng 2: Biên lợi nhuận, AOV, Tỷ lệ hoàn trả
     diff_pm, pct_pm = compute_delta(kpi_current['profit_margin'], kpi_prev['profit_margin'])
-    k4.metric(
-        "Biên lợi nhuận", 
-        f"{kpi_current['profit_margin']:.1f}%", 
+    row2[0].metric(
+        "Biên lợi nhuận",
+        f"{kpi_current['profit_margin']:.1f}%",
         f"{diff_pm:.1f}% ({pct_pm:.1f}% )" if pct_pm is not None else "–"
     )
-    # AOV
     diff_aov, pct_aov = compute_delta(kpi_current['aov'], kpi_prev['aov'])
-    k5.metric(
-        "AOV", 
+    row2[1].metric(
+        "AOV",
         format_currency(kpi_current['aov']),
         f"{diff_aov:,.0f} ₫ ({pct_aov:.1f}% )" if pct_aov is not None else "–"
     )
-    # Tỷ lệ hoàn trả
     diff_rr, pct_rr = compute_delta(kpi_current['return_rate'], kpi_prev['return_rate'])
-    k6.metric(
-        "Tỷ lệ hoàn trả", 
+    row2[2].metric(
+        "Tỷ lệ hoàn trả",
         f"{kpi_current['return_rate']:.1f}%",
         f"{diff_rr:.1f}% ({pct_rr:.1f}% )" if pct_rr is not None else "–"
     )
@@ -688,45 +687,8 @@ def main():
         )
 
     # ------------------------------------------------------------------
-    # Phần 6: Hệ thống cảnh báo KPI
-    st.markdown("## ⚠️ Cảnh báo KPI")
-    warnings = []
-    # Kiểm tra doanh thu giảm 3 tháng liên tiếp
-    if not month_summary.empty:
-        # Sắp xếp theo thời gian
-        ms = month_summary.sort_values(['Year','Month'])
-        decreasing_streak = False
-        # Kiểm tra từng chuỗi 3 tháng liên tiếp
-        for i in range(len(ms) - 2):
-            if ms.iloc[i]['Doanh thu thuần'] > ms.iloc[i+1]['Doanh thu thuần'] > ms.iloc[i+2]['Doanh thu thuần']:
-                decreasing_streak = True
-                break
-        if decreasing_streak:
-            warnings.append("Doanh thu thuần giảm liên tiếp 3 tháng gần đây. 🔻")
-    # Kiểm tra tỷ lệ hoàn trả >5%
-    if kpi_current['return_rate'] > 5:
-        warnings.append("Tỷ lệ hoàn trả vượt 5%. Vui lòng xem xét quy trình hậu mãi.")
-    # Nếu có cảnh báo, hiển thị
-    if warnings:
-        for w in warnings:
-            st.warning(w)
-    else:
-        st.success("Không có cảnh báo nghiêm trọng cho khoảng thời gian này.")
-
-    # ------------------------------------------------------------------
-    # Phần 7: Kết luận & gợi ý hành động
-    st.markdown("## 📝 Kết luận & Gợi ý hành động")
-    st.write(
-        "Dựa trên các phân tích ở trên, sau đây là một số gợi ý nhằm tối ưu hiệu quả kinh doanh:")
-    conclusions = [
-        "Đẩy mạnh kênh Web để giảm phụ thuộc vào kênh có thị phần lớn nhất.",
-        "Tăng AOV trên TikTok bằng cách triển khai gói combo và upsell.",
-        "Đầu tư marketing vào giữa năm để lấp đầy khoảng trống doanh thu Q2–Q3.",
-        "Kiểm soát giá vốn và tối ưu chi phí để duy trì biên lợi nhuận > 20%.",
-        "Xem xét chương trình hoàn trả để giảm tỷ lệ hoàn trả xuống dưới 5%."
-    ]
-    for c in conclusions:
-        st.markdown(f"- {c}")
+    # Phần cảnh báo KPI và kết luận đã được lược bỏ theo yêu cầu người dùng.  Thay vì hiển thị cảnh báo và gợi ý,
+    # bảng điều khiển tập trung vào các biểu đồ và bảng số liệu, cho phép người dùng tự phân tích.
 
     # ==================================================================
     # Dữ liệu chi tiết và tải xuống CSV
