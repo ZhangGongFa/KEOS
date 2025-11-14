@@ -82,6 +82,8 @@ def load_data():
     revenue_df = pd.read_excel(revenue_path)
     # Parse the date column in the revenue data
     revenue_df['Ngày'] = pd.to_datetime(revenue_df['Ngày'], dayfirst=True)
+    # Filter out data beyond October 2025 (exclude month 11 and later)
+    revenue_df = revenue_df[revenue_df['Ngày'] < pd.Timestamp(2025, 11, 1)]
     return sales_df, revenue_df
 
 
@@ -212,27 +214,9 @@ def main():
                     end_date = date(year, month + 1, 1) - pd.Timedelta(days=1)
             except Exception:
                 pass
-        # Metric selection for time series plot
-        metric_options = {
-            'Doanh thu': 'Doanh thu',
-            'Doanh thu thuần': 'Doanh thu thuần',
-            'Tổng lợi nhuận': 'Tổng lợi nhuận',
-            'Đơn hàng': 'Đơn hàng'
-        }
-        selected_metric_label = st.selectbox(
-            "Chọn chỉ số biểu diễn theo ngày",
-            options=list(metric_options.keys()),
-            index=0
-        )
-        selected_metric = metric_options[selected_metric_label]
-        # Chart type selection for the time series
-        chart_type = st.radio(
-            "Kiểu biểu đồ thời gian",
-            options=["Đường", "Cột"],
-            index=0
-        )
+        # Divider
         st.markdown("---")
-        st.caption("Lọc dữ liệu theo ngày hoặc theo tháng và chọn chỉ số để hiển thị biểu đồ.")
+        st.caption("Lọc dữ liệu theo ngày hoặc theo tháng.")
 
     # Main content
     # Display logo at the top of the page
@@ -243,14 +227,18 @@ def main():
         if p.exists():
             logo_path = str(p)
             break
-    if logo_path:
-        st.image(logo_path, width=200)
-    else:
-        st.write("**Logo không tìm thấy.**")
+    # Display logo centred using columns
+    logo_cols = st.columns([1, 2, 1])
+    with logo_cols[1]:
+        if logo_path:
+            st.image(logo_path, width=180)
+        else:
+            st.write("**Logo không tìm thấy.**")
+    # Title and description
     st.title("Bảng điều khiển Kinh doanh Keos")
     st.write(
         "Ứng dụng này trực quan hóa dữ liệu bán hàng và doanh thu của Keos, "
-        "giúp bạn hiểu rõ hơn về hiệu quả kinh doanh theo thời gian và theo kênh bán hàng."
+        "giúp bạn hiểu rõ hơn về hiệu quả kinh doanh theo thời gian, theo tháng và theo kênh bán hàng."
     )
 
     # Filter revenue data by selected date range
@@ -341,6 +329,29 @@ def main():
         ).properties(height=300)
         st.altair_chart(line_invoices, use_container_width=True)
 
+        # Top 10 days with highest net revenue
+        if not daily_df.empty:
+            top10 = daily_df.nlargest(10, 'Doanh thu thuần')
+            bar_top = alt.Chart(top10).mark_bar(color='#17becf').encode(
+                x=alt.X('Ngày:T', title='Ngày', sort=None),
+                y=alt.Y('Doanh thu thuần:Q', title='Doanh thu thuần (₫)'),
+                tooltip=['Ngày:T', 'Doanh thu thuần:Q', 'Đơn hàng:Q']
+            ).properties(height=300, title='Top 10 ngày có doanh thu thuần cao nhất')
+            st.altair_chart(bar_top, use_container_width=True)
+            # Commentary on notable days
+            top_rev_day = top10.iloc[0]
+            st.write(
+                f"Ngày **{top_rev_day['Ngày'].strftime('%d/%m/%Y')}** có doanh thu thuần cao nhất: "
+                f"**{top_rev_day['Doanh thu thuần']:,.0f} ₫** với **{int(top_rev_day['Đơn hàng'])}** đơn hàng."
+            )
+            # Compute day with highest AOV (for days with non-zero orders)
+            daily_df['AOV'] = daily_df.apply(lambda row: row['Doanh thu thuần']/row['Đơn hàng'] if row['Đơn hàng']>0 else 0, axis=1)
+            top_aov_day = daily_df.loc[daily_df['AOV'].idxmax()]
+            st.write(
+                f"Ngày **{top_aov_day['Ngày'].strftime('%d/%m/%Y')}** có giá trị trung bình đơn hàng (AOV) cao nhất: "
+                f"**{top_aov_day['AOV']:,.0f} ₫** với {int(top_aov_day['Đơn hàng'])} đơn hàng."
+            )
+
     # ---------- Tab 2: Theo tháng ----------
     with tab_thang:
         st.subheader("Biểu đồ tổng hợp theo tháng")
@@ -407,6 +418,30 @@ def main():
         layered = alt.layer(line_returns, line_discount_ratio).resolve_scale(y='independent').properties(height=300, title='Hoàn trả & Tỷ lệ giảm giá theo tháng')
         st.altair_chart(layered, use_container_width=True)
 
+        # Commentary on monthly trends
+        if not month_summary.empty:
+            # Highest and lowest revenue months
+            max_row = month_summary.loc[month_summary['Doanh thu thuần'].idxmax()]
+            min_row = month_summary.loc[month_summary['Doanh thu thuần'].idxmin()]
+            st.write(
+                f"Tháng có doanh thu thuần cao nhất là **{max_row['Tháng']} {int(max_row['Year'])}** với "
+                f"**{max_row['Doanh thu thuần']:,.0f} ₫**. "
+                f"Tháng thấp nhất là **{min_row['Tháng']} {int(min_row['Year'])}** ("
+                f"**{min_row['Doanh thu thuần']:,.0f} ₫**)."
+            )
+            # Highest AOV month
+            max_aov_row = month_summary.loc[month_summary['AOV'].idxmax()]
+            st.write(
+                f"AOV cao nhất rơi vào **{max_aov_row['Tháng']} {int(max_aov_row['Year'])}**: "
+                f"**{max_aov_row['AOV']:,.0f} ₫**/đơn hàng."
+            )
+            # Highest discount ratio month
+            max_disc_row = month_summary.loc[month_summary['Tỷ lệ giảm giá'].idxmax()]
+            st.write(
+                f"Tỷ lệ giảm giá lớn nhất xuất hiện ở **{max_disc_row['Tháng']} {int(max_disc_row['Year'])}**: "
+                f"**{max_disc_row['Tỷ lệ giảm giá']:.1f}%** doanh thu."
+            )
+
     # ---------- Tab 3: Theo kênh ----------
     with tab_kenh:
         st.subheader("Biểu đồ theo kênh bán hàng")
@@ -454,6 +489,21 @@ def main():
             ).properties(height=250, title='Giảm giá')
             st.altair_chart(chart_discount, use_container_width=True)
 
+        # Commentary on channel performance
+        if not channel_df.empty:
+            # Highest performers by metric
+            top_rev = channel_df.loc[channel_df['Doanh thu thuần'].idxmax()]
+            top_orders = channel_df.loc[channel_df['Đơn hàng'].idxmax()]
+            top_aov = channel_df.loc[channel_df['AOV'].idxmax()]
+            top_discount = channel_df.loc[channel_df['Giảm giá'].idxmax()]
+            st.write(
+                f"Kênh **{top_rev['Kênh bán hàng']}** tạo ra doanh thu thuần cao nhất (**{top_rev['Doanh thu thuần']:,.0f} ₫**), "
+                f"trong khi kênh **{top_orders['Kênh bán hàng']}** có số đơn hàng cao nhất (**{int(top_orders['Đơn hàng'])}** đơn). "
+                f"AOV cao nhất thuộc về kênh **{top_aov['Kênh bán hàng']}** với **{top_aov['AOV']:,.0f} ₫**/đơn. "
+                f"Kênh sử dụng giảm giá nhiều nhất là **{top_discount['Kênh bán hàng']}** (" 
+                f"**{top_discount['Giảm giá']:,.0f} ₫** giảm giá)."
+            )
+
     # ---------- Tab 4: Phân phối ----------
     with tab_phanphoi:
         st.subheader("Phân phối dữ liệu")
@@ -481,6 +531,15 @@ def main():
             tooltip=['Ngày:T', 'Đơn hàng:Q', 'Doanh thu thuần:Q']
         ).properties(height=400, title='Đơn hàng vs Doanh thu thuần')
         st.altair_chart(scatter, use_container_width=True)
+
+        # Commentary on distributions
+        if not filtered_revenue.empty:
+            median_rev = filtered_revenue['Doanh thu thuần'].median()
+            median_orders = filtered_revenue['Đơn hàng'].median()
+            st.write(
+                f"Phần lớn ngày có doanh thu thuần quanh **{median_rev:,.0f} ₫** và số đơn hàng trung vị khoảng **{int(median_orders)}** đơn. "
+                f"Các histogram giúp nhận ra phân bố lệch và các ngày doanh thu/đơn hàng vượt trội hoặc thấp bất thường."
+            )
 
 
 
