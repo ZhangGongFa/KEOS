@@ -568,26 +568,53 @@ def main():
         channel_month['Tháng'] = channel_month['Month'].map(month_names_local)
         # Chỉ giữ lại các tháng có dữ liệu và sắp xếp theo thứ tự
         channel_month = channel_month.dropna(subset=['Tháng'])
-        # Biểu đồ cột xếp chồng theo tháng
-        stacked_channel = alt.Chart(channel_month).mark_bar().encode(
+        # Biểu đồ cột xếp chồng và biểu đồ đường cho phân bổ doanh thu theo kênh bán hàng
+        # Khi người dùng yêu cầu cả hai dạng biểu đồ, chúng ta tạo cả bar chart và line chart.
+        # Biểu đồ cột xếp chồng theo tháng (bar)
+        stacked_channel_bar = alt.Chart(channel_month).mark_bar().encode(
             x=alt.X('Tháng:N', sort=list(month_names_local.values()), title='Tháng'),
             y=alt.Y('Doanh thu thuần:Q', title='Doanh thu thuần (₫)', axis=alt.Axis(format=',.0f'), stack='zero'),
             color=alt.Color('Kênh bán hàng:N', title='Kênh bán hàng'),
             tooltip=['Kênh bán hàng:N','Tháng:N','Doanh thu thuần:Q']
-        ).properties(height=300, title='Phân bổ Doanh thu thuần theo kênh bán hàng mỗi tháng')
-        st.altair_chart(stacked_channel, use_container_width=True)
+        ).properties(height=300, title='Phân bổ Doanh thu thuần theo kênh bán hàng mỗi tháng (cột)')
+        # Biểu đồ đường theo tháng (line)
+        line_channel = alt.Chart(channel_month).mark_line(point=True).encode(
+            x=alt.X('Tháng:N', sort=list(month_names_local.values()), title='Tháng'),
+            y=alt.Y('Doanh thu thuần:Q', title='Doanh thu thuần (₫)', axis=alt.Axis(format=',.0f')),
+            color=alt.Color('Kênh bán hàng:N', title='Kênh bán hàng'),
+            tooltip=['Kênh bán hàng:N','Tháng:N','Doanh thu thuần:Q']
+        ).properties(height=300, title='Phân bổ Doanh thu thuần theo kênh bán hàng mỗi tháng (đường)')
+        # Hiển thị bar và line song song
+        ch_col1, ch_col2 = st.columns(2)
+        with ch_col1:
+            st.altair_chart(stacked_channel_bar, use_container_width=True)
+        with ch_col2:
+            st.altair_chart(line_channel, use_container_width=True)
+
         # Tính quý cho dữ liệu kênh
         channel_month['Quarter'] = ((channel_month['Month'] - 1)//3 + 1)
         quarter_channel = channel_month.groupby(['Quarter','Kênh bán hàng']).agg({'Doanh thu thuần':'sum'}).reset_index()
         quarter_channel['Quý'] = quarter_channel['Quarter'].apply(lambda q: f"Q{int(q)}")
-        # Biểu đồ cột xếp chồng theo quý
-        stacked_quarter_channel = alt.Chart(quarter_channel).mark_bar().encode(
+        # Biểu đồ cột xếp chồng theo quý (bar)
+        stacked_quarter_bar = alt.Chart(quarter_channel).mark_bar().encode(
             x=alt.X('Quý:N', sort=['Q1','Q2','Q3','Q4'], title='Quý'),
             y=alt.Y('Doanh thu thuần:Q', title='Doanh thu thuần (₫)', axis=alt.Axis(format=',.0f'), stack='zero'),
             color=alt.Color('Kênh bán hàng:N', title='Kênh bán hàng'),
             tooltip=['Kênh bán hàng:N','Quý:N','Doanh thu thuần:Q']
-        ).properties(height=300, title='Phân bổ Doanh thu thuần theo kênh bán hàng mỗi quý')
-        st.altair_chart(stacked_quarter_channel, use_container_width=True)
+        ).properties(height=300, title='Phân bổ Doanh thu thuần theo kênh bán hàng mỗi quý (cột)')
+        # Biểu đồ đường theo quý (line)
+        line_quarter = alt.Chart(quarter_channel).mark_line(point=True).encode(
+            x=alt.X('Quý:N', sort=['Q1','Q2','Q3','Q4'], title='Quý'),
+            y=alt.Y('Doanh thu thuần:Q', title='Doanh thu thuần (₫)', axis=alt.Axis(format=',.0f')),
+            color=alt.Color('Kênh bán hàng:N', title='Kênh bán hàng'),
+            tooltip=['Kênh bán hàng:N','Quý:N','Doanh thu thuần:Q']
+        ).properties(height=300, title='Phân bổ Doanh thu thuần theo kênh bán hàng mỗi quý (đường)')
+        # Hiển thị bar và line cho quý song song
+        q_col1, q_col2 = st.columns(2)
+        with q_col1:
+            st.altair_chart(stacked_quarter_bar, use_container_width=True)
+        with q_col2:
+            st.altair_chart(line_quarter, use_container_width=True)
 
     # ------------------------------------------------------------------
     # Phần 4: So sánh kênh bán hàng
