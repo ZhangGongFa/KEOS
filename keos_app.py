@@ -37,6 +37,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime, date
 from functools import lru_cache
 from pathlib import Path
+import glob
 
 
 def load_data():
@@ -125,6 +126,49 @@ def preprocess_revenue(df: pd.DataFrame) -> pd.DataFrame:
         processed[col] = pd.to_numeric(processed[col], errors='coerce')
     return processed
 
+# ----------------------------------------------------------------------
+# Additional loader for monthly channel data
+@st.cache_data
+def load_monthly_channel_data() -> pd.DataFrame:
+    """
+    Load monthly channel sales data from files named `kenhban-thangX.xlsx`.
+
+    The files should reside in the current working directory or `/home/oai/share`.
+    Each file contains aggregated metrics for a single month and multiple sales
+    channels.  The month number is parsed from the filename.
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame with an additional 'Month' column indicating the month number.
+    """
+    base_dirs = [Path('.'), Path('/home/oai/share')]
+    monthly_files = []
+    # Search for files matching the pattern in both possible directories
+    for base in base_dirs:
+        monthly_files = sorted(list(base.glob('kenhban-thang*.xlsx')))
+        if monthly_files:
+            break
+    records = []
+    for file in monthly_files:
+        try:
+            month_str = ''.join(filter(str.isdigit, file.stem))  # extract numbers from filename
+            month = int(month_str) if month_str.isdigit() else None
+        except Exception:
+            month = None
+        df = pd.read_excel(file)
+        df = df.copy()
+        df['Month'] = month
+        records.append(df)
+    if records:
+        return pd.concat(records, ignore_index=True)
+    else:
+        # Return empty dataframe with expected columns
+        return pd.DataFrame(columns=[
+            'Kênh bán hàng','Đơn hàng','Doanh thu','Giảm giá','Doanh thu thuần',
+            'Tổng hoá đơn','Đã thu','Tổng giá vốn','Tổng lợi nhuận','% lợi nhuận','Month'
+        ])
+
 
 # ----------------------------------------------------------------------
 # Utility functions
@@ -178,6 +222,8 @@ def main():
     # Tải dữ liệu
     sales_df, revenue_df_raw = get_data()
     revenue_df = preprocess_revenue(revenue_df_raw)
+    # Tải dữ liệu kênh bán hàng theo tháng nếu có
+    monthly_channel_df = load_monthly_channel_data()
 
     # Sidebar — bộ lọc và lựa chọn
     with st.sidebar:
@@ -512,6 +558,36 @@ def main():
             f"Tỷ lệ giảm giá lớn nhất: **{max_disc_row['Tháng']} {int(max_disc_row['Year'])}** "
             f"với **{max_disc_row['Tỷ lệ giảm giá']:.1f}%** doanh thu."
         )
+
+    # Phân bổ doanh thu theo kênh bán hàng cho từng tháng/quý
+    if not monthly_channel_df.empty:
+        st.markdown("### Phân bổ doanh thu theo kênh bán hàng")
+        # Bổ sung tên tháng vào dữ liệu kênh hàng tháng
+        channel_month = monthly_channel_df.copy()
+        # Sử dụng month_names_local từ trước để ánh xạ số tháng sang tên
+        channel_month['Tháng'] = channel_month['Month'].map(month_names_local)
+        # Chỉ giữ lại các tháng có dữ liệu và sắp xếp theo thứ tự
+        channel_month = channel_month.dropna(subset=['Tháng'])
+        # Biểu đồ cột xếp chồng theo tháng
+        stacked_channel = alt.Chart(channel_month).mark_bar().encode(
+            x=alt.X('Tháng:N', sort=list(month_names_local.values()), title='Tháng'),
+            y=alt.Y('Doanh thu thuần:Q', title='Doanh thu thuần (₫)', axis=alt.Axis(format=',.0f'), stack='zero'),
+            color=alt.Color('Kênh bán hàng:N', title='Kênh bán hàng'),
+            tooltip=['Kênh bán hàng:N','Tháng:N','Doanh thu thuần:Q']
+        ).properties(height=300, title='Phân bổ Doanh thu thuần theo kênh bán hàng mỗi tháng')
+        st.altair_chart(stacked_channel, use_container_width=True)
+        # Tính quý cho dữ liệu kênh
+        channel_month['Quarter'] = ((channel_month['Month'] - 1)//3 + 1)
+        quarter_channel = channel_month.groupby(['Quarter','Kênh bán hàng']).agg({'Doanh thu thuần':'sum'}).reset_index()
+        quarter_channel['Quý'] = quarter_channel['Quarter'].apply(lambda q: f"Q{int(q)}")
+        # Biểu đồ cột xếp chồng theo quý
+        stacked_quarter_channel = alt.Chart(quarter_channel).mark_bar().encode(
+            x=alt.X('Quý:N', sort=['Q1','Q2','Q3','Q4'], title='Quý'),
+            y=alt.Y('Doanh thu thuần:Q', title='Doanh thu thuần (₫)', axis=alt.Axis(format=',.0f'), stack='zero'),
+            color=alt.Color('Kênh bán hàng:N', title='Kênh bán hàng'),
+            tooltip=['Kênh bán hàng:N','Quý:N','Doanh thu thuần:Q']
+        ).properties(height=300, title='Phân bổ Doanh thu thuần theo kênh bán hàng mỗi quý')
+        st.altair_chart(stacked_quarter_channel, use_container_width=True)
 
     # ------------------------------------------------------------------
     # Phần 4: So sánh kênh bán hàng
