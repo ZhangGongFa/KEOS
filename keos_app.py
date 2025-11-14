@@ -559,6 +559,51 @@ def main():
             f"với **{max_disc_row['Tỷ lệ giảm giá']:.1f}%** doanh thu."
         )
 
+    # ------------------------------------------------------------------
+    # Dự báo doanh thu tháng 11 dựa trên dữ liệu tháng 1–10
+    # Chỉ thực hiện khi có đủ dữ liệu của mười tháng đầu năm hiện tại
+    try:
+        # Tổng doanh thu thuần theo tháng cho năm hiện tại
+        monthly_totals = revenue_df[revenue_df['Ngày'].dt.year == current_year].copy()
+        monthly_totals['Month'] = monthly_totals['Ngày'].dt.month
+        monthly_sum = monthly_totals.groupby('Month')['Doanh thu thuần'].sum().sort_index()
+        # Dùng dữ liệu từ tháng 1 tới 10 để dự báo tháng 11
+        x_months = monthly_sum.index.values
+        y_revenue = monthly_sum.values
+        # Kiểm tra có ít nhất 2 điểm để fit tuyến tính
+        if len(x_months) >= 2 and 11 not in x_months:
+            # Fit mô hình tuyến tính y = m*x + c
+            coeffs = np.polyfit(x_months, y_revenue, 1)
+            slope, intercept = coeffs
+            forecast_month = 11
+            forecast_revenue = slope * forecast_month + intercept
+            # Tạo khung dữ liệu bao gồm doanh thu thực tế và dự báo
+            months_for_plot = list(x_months) + [forecast_month]
+            revenues_for_plot = list(y_revenue) + [forecast_revenue]
+            types = ['Thực tế'] * len(x_months) + ['Dự báo']
+            month_names_for_plot = [month_names_local.get(m, f'Tháng {m}') for m in months_for_plot]
+            forecast_df = pd.DataFrame({
+                'Tháng': month_names_for_plot,
+                'Doanh thu thuần': revenues_for_plot,
+                'Loại': types
+            })
+            # Hiển thị kết quả dự báo
+            st.markdown("### 🔮 Dự báo doanh thu tháng 11")
+            st.write(
+                f"Dự báo doanh thu thuần tháng 11 dựa trên xu hướng 10 tháng đầu năm là: **{forecast_revenue:,.0f} ₫**."
+            )
+            # Biểu đồ đường thể hiện dữ liệu thực tế và dự báo
+            chart_forecast = alt.Chart(forecast_df).mark_line(point=True).encode(
+                x=alt.X('Tháng:N', title='Tháng', sort=list(month_names_for_plot)),
+                y=alt.Y('Doanh thu thuần:Q', title='Doanh thu thuần (₫)', axis=alt.Axis(format=',.0f')),
+                color=alt.Color('Loại:N', title='Loại dữ liệu'),
+                tooltip=['Loại:N','Tháng:N','Doanh thu thuần:Q']
+            ).properties(height=300, title='Doanh thu thuần thực tế và dự báo tháng 11')
+            st.altair_chart(chart_forecast, use_container_width=True)
+    except Exception:
+        # Nếu dữ liệu không đủ hoặc có lỗi, bỏ qua phần dự báo
+        pass
+
     # Phân bổ doanh thu theo kênh bán hàng cho từng tháng/quý
     if not monthly_channel_df.empty:
         st.markdown("### Phân bổ doanh thu theo kênh bán hàng")
