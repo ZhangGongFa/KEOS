@@ -32,6 +32,8 @@ import pandas as pd
 import numpy as np
 import altair as alt
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from datetime import datetime, date
 from functools import lru_cache
 from pathlib import Path
@@ -262,144 +264,228 @@ def main():
     total_revenue = float(filtered_revenue['Doanh thu'].sum())
     total_net_revenue = float(filtered_revenue['Doanh thu thuần'].sum())
     total_profit = float(filtered_revenue['Tổng lợi nhuận'].sum())
-    average_profit_margin = (
-        filtered_revenue['Tổng lợi nhuận'].sum() / filtered_revenue['Doanh thu thuần'].sum() * 100
-        if filtered_revenue['Doanh thu thuần'].sum() > 0 else 0
-    )
-
-    # Display KPI summary cards
+    total_invoices = float(filtered_revenue['Tổng hoá đơn'].sum())
+    total_collected = float(filtered_revenue['Đã thu'].sum())
+    aov_overall = (total_net_revenue / total_orders) if total_orders > 0 else 0
+    percent_collected = (total_collected / total_invoices * 100) if total_invoices > 0 else 0
+    # Display KPI summary cards: net revenue, orders, AOV, percentage collected
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    kpi1.metric("Tổng đơn hàng", f"{total_orders:,}")
-    kpi2.metric("Tổng doanh thu", format_currency(total_revenue))
-    kpi3.metric("Doanh thu thuần", format_currency(total_net_revenue))
-    kpi4.metric("Tổng lợi nhuận", format_currency(total_profit), f"{average_profit_margin:.1f}%")
+    kpi1.metric("Doanh thu thuần", format_currency(total_net_revenue))
+    kpi2.metric("Tổng đơn hàng", f"{total_orders:,}")
+    kpi3.metric("AOV", format_currency(aov_overall))
+    kpi4.metric("% Đã thu", f"{percent_collected:.1f}%")
 
     # ------------------------------------------------------------------
-    # Monthly analysis section (moved before channel overview)
-    st.markdown("## Doanh thu theo tháng")
-    # Create month and year columns
-    monthly_df = revenue_df.copy()
-    monthly_df['Year'] = monthly_df['Ngày'].dt.year
-    monthly_df['Month'] = monthly_df['Ngày'].dt.month
-    # Aggregate metrics per month/year
-    monthly_summary = monthly_df.groupby(['Year', 'Month']).agg({
-        'Đơn hàng': 'sum',
-        'Doanh thu': 'sum',
-        'Doanh thu thuần': 'sum',
-        'Tổng lợi nhuận': 'sum'
-    }).reset_index()
-    # Map month numbers to names in Vietnamese
-    month_names = {
-        1: 'Tháng 1', 2: 'Tháng 2', 3: 'Tháng 3', 4: 'Tháng 4',
-        5: 'Tháng 5', 6: 'Tháng 6', 7: 'Tháng 7', 8: 'Tháng 8',
-        9: 'Tháng 9', 10: 'Tháng 10', 11: 'Tháng 11', 12: 'Tháng 12'
-    }
-    monthly_summary['MonthName'] = monthly_summary['Month'].map(month_names)
-    # Sort by Year and Month for consistent ordering
-    monthly_summary = monthly_summary.sort_values(['Year', 'Month'])
-    # Allow users to select which months to display
-    available_months = monthly_summary['MonthName'].unique().tolist()
-    selected_months = st.multiselect(
-        "Chọn tháng để so sánh",
-        options=available_months,
-        default=available_months
-    )
-    # Filter data based on selected months
-    comparison_df = monthly_summary[monthly_summary['MonthName'].isin(selected_months)].copy()
-    # Build the comparison bar chart (grouped by year, colored by month)
-    monthly_chart = alt.Chart(comparison_df).mark_bar().encode(
-        x=alt.X('Year:N', title='Năm'),
-        y=alt.Y('Doanh thu thuần:Q', title='Doanh thu thuần (₫)'),
-        color=alt.Color('MonthName:N', title='Tháng'),
-        tooltip=['Year:N', 'MonthName:N', 'Doanh thu thuần:Q']
-    ).properties(height=400)
-    st.altair_chart(monthly_chart, use_container_width=True)
-    # Story telling / narrative insight
-    # Identify the month with the highest and lowest revenue
-    if not monthly_summary.empty:
-        highest = monthly_summary.loc[monthly_summary['Doanh thu thuần'].idxmax()]
-        lowest = monthly_summary.loc[monthly_summary['Doanh thu thuần'].idxmin()]
-        st.markdown("### Đánh giá xu hướng")
-        st.write(
-            f"Trong toàn bộ dữ liệu, **{month_names[int(highest['Month'])]} {int(highest['Year'])}** "
-            f"đạt doanh thu thuần cao nhất với khoảng **{highest['Doanh thu thuần']:,.0f} ₫**. "
-            f"Ngược lại, **{month_names[int(lowest['Month'])]} {int(lowest['Year'])}** "
-            f"có doanh thu thuần thấp nhất với **{lowest['Doanh thu thuần']:,.0f} ₫**."
-        )
-        # Compute month-on-month change for each year
-        monthly_summary['Prev_Revenue'] = monthly_summary.groupby('Year')['Doanh thu thuần'].shift(1)
-        monthly_summary['MoM_Change'] = (monthly_summary['Doanh thu thuần'] - monthly_summary['Prev_Revenue']) / monthly_summary['Prev_Revenue'] * 100
-        # Remove rows where previous revenue is NaN
-        changes = monthly_summary.dropna(subset=['MoM_Change'])
-        if not changes.empty:
-            increase_month = changes.loc[changes['MoM_Change'].idxmax()]
-            decrease_month = changes.loc[changes['MoM_Change'].idxmin()]
-            inc_mom = increase_month['MoM_Change']
-            dec_mom = decrease_month['MoM_Change']
-            st.write(
-                f"Tăng trưởng doanh thu thuần mạnh nhất diễn ra từ **{month_names[int(increase_month['Month']-1)] if increase_month['Month']>1 else month_names[12]}"
-                f" đến {month_names[int(increase_month['Month'])]} {int(increase_month['Year'])}**, tăng khoảng **{inc_mom:.1f}%** so với tháng trước. "
-                f"Ngược lại, mức sụt giảm lớn nhất là từ **{month_names[int(decrease_month['Month']-1)] if decrease_month['Month']>1 else month_names[12]}"
-                f" đến {month_names[int(decrease_month['Month'])]} {int(decrease_month['Year'])}**, giảm **{abs(dec_mom):.1f}%** so với tháng trước."
+    # Tabs for detailed analysis
+    tab_ngay, tab_thang, tab_kenh, tab_phanphoi = st.tabs([
+        "Theo ngày", "Theo tháng", "Theo kênh", "Phân phối"
+    ])
+
+    # ---------- Tab 1: Theo ngày ----------
+    with tab_ngay:
+        st.subheader("Biểu đồ theo ngày")
+        # Prepare daily data sorted by date
+        daily_df = filtered_revenue.sort_values('Ngày')
+        # Line chart – Doanh thu thuần theo ngày
+        line_revenue = alt.Chart(daily_df).mark_line(color='#1f77b4').encode(
+            x=alt.X('Ngày:T', title='Ngày'),
+            y=alt.Y('Doanh thu thuần:Q', title='Doanh thu thuần (₫)'),
+            tooltip=['Ngày:T', 'Doanh thu thuần:Q']
+        ).properties(height=300)
+        st.altair_chart(line_revenue, use_container_width=True)
+        # Line chart – Đơn hàng theo ngày
+        line_orders = alt.Chart(daily_df).mark_line(color='#ff7f0e').encode(
+            x=alt.X('Ngày:T', title='Ngày'),
+            y=alt.Y('Đơn hàng:Q', title='Đơn hàng'),
+            tooltip=['Ngày:T', 'Đơn hàng:Q']
+        ).properties(height=300)
+        st.altair_chart(line_orders, use_container_width=True)
+        # Dual-axis line chart: Đơn hàng & Doanh thu thuần
+        if not daily_df.empty:
+            fig_dual = make_subplots(specs=[[{"secondary_y": True}]])
+            fig_dual.add_trace(
+                go.Scatter(
+                    x=daily_df['Ngày'],
+                    y=daily_df['Đơn hàng'],
+                    name='Đơn hàng',
+                    mode='lines',
+                    line=dict(color='#ff7f0e')
+                ),
+                secondary_y=False
             )
-
-
-    st.markdown("## Tổng quan theo kênh bán hàng")
-    # Allow the user to choose which metric to compare across sales channels
-    channel_metric_options = {
-        'Đơn hàng': 'Đơn hàng',
-        'Doanh thu': 'Doanh thu',
-        'Doanh thu thuần': 'Doanh thu thuần',
-        'Tổng lợi nhuận': 'Tổng lợi nhuận'
-    }
-    selected_channel_metric_label = st.selectbox(
-        "Chọn chỉ số để so sánh theo kênh",
-        options=list(channel_metric_options.keys()),
-        index=2  # default to Doanh thu thuần
-    )
-    selected_channel_metric = channel_metric_options[selected_channel_metric_label]
-    # Prepare data for chart: sort descending by selected metric
-    channel_data = sales_df[['Kênh bán hàng', selected_channel_metric]].copy()
-    channel_data = channel_data.sort_values(selected_channel_metric, ascending=False)
-    # Create bar chart for selected metric
-    channel_chart = alt.Chart(channel_data).mark_bar().encode(
-        x=alt.X('Kênh bán hàng:N', title='Kênh bán hàng', sort=list(channel_data['Kênh bán hàng'])),
-        y=alt.Y(f'{selected_channel_metric}:Q', title=selected_channel_metric_label),
-        color=alt.Color('Kênh bán hàng:N', legend=None),
-        tooltip=['Kênh bán hàng:N', f'{selected_channel_metric}:Q']
-    ).properties(height=400)
-    st.altair_chart(channel_chart, use_container_width=True)
-    # Provide a narrative comparison of channels
-    top_channel = channel_data.iloc[0]
-    bottom_channel = channel_data.iloc[-1]
-    st.write(
-        f"Kênh **{top_channel['Kênh bán hàng']}** đang dẫn đầu về {selected_channel_metric_label.lower()} "
-        f"với giá trị đạt **{top_channel[selected_channel_metric]:,.0f}**. "
-        f"Trong khi đó, kênh **{bottom_channel['Kênh bán hàng']}** có {selected_channel_metric_label.lower()} thấp nhất ("
-        f"**{bottom_channel[selected_channel_metric]:,.0f}**)."
-    )
-
-    st.markdown(f"## Xu hướng theo ngày – {selected_metric_label}")
-    st.caption("Biểu đồ dưới đây thể hiện sự thay đổi của chỉ số được chọn theo từng ngày trong khoảng thời gian bạn lọc ở bên trái.")
-    # Create time series chart for the selected metric
-    chart_data = filtered_revenue[['Ngày', selected_metric]].rename(columns={selected_metric: 'Giá trị'})
-    chart_data = chart_data.sort_values('Ngày')
-    if chart_type == "Đường":
-        # Line chart using altair
-        line_chart = alt.Chart(chart_data).mark_line(point=True).encode(
+            fig_dual.add_trace(
+                go.Scatter(
+                    x=daily_df['Ngày'],
+                    y=daily_df['Doanh thu thuần'],
+                    name='Doanh thu thuần',
+                    mode='lines',
+                    line=dict(color='#1f77b4')
+                ),
+                secondary_y=True
+            )
+            fig_dual.update_layout(
+                title_text='Đơn hàng & Doanh thu thuần theo ngày',
+                legend=dict(orientation='h', x=0.1, y=1.15)
+            )
+            fig_dual.update_xaxes(title_text='Ngày')
+            fig_dual.update_yaxes(title_text='Đơn hàng', secondary_y=False)
+            fig_dual.update_yaxes(title_text='Doanh thu thuần (₫)', secondary_y=True)
+            st.plotly_chart(fig_dual, use_container_width=True)
+        # Line chart – Tổng hoá đơn vs Đã thu
+        invoice_long = daily_df[['Ngày', 'Tổng hoá đơn', 'Đã thu']].melt('Ngày', var_name='Loại', value_name='Giá trị')
+        line_invoices = alt.Chart(invoice_long).mark_line().encode(
             x=alt.X('Ngày:T', title='Ngày'),
-            y=alt.Y('Giá trị:Q', title=selected_metric_label),
-            tooltip=['Ngày:T', 'Giá trị:Q']
-        ).interactive().properties(height=400)
-        st.altair_chart(line_chart, use_container_width=True)
-    else:
-        # Column/bar chart using altair
-        bar_chart = alt.Chart(chart_data).mark_bar().encode(
-            x=alt.X('Ngày:T', title='Ngày'),
-            y=alt.Y('Giá trị:Q', title=selected_metric_label),
-            tooltip=['Ngày:T', 'Giá trị:Q']
-        ).interactive().properties(height=400)
-        st.altair_chart(bar_chart, use_container_width=True)
+            y=alt.Y('Giá trị:Q', title='Giá trị (₫)'),
+            color=alt.Color('Loại:N', title='Loại'),
+            tooltip=['Ngày:T', 'Loại:N', 'Giá trị:Q']
+        ).properties(height=300)
+        st.altair_chart(line_invoices, use_container_width=True)
+
+    # ---------- Tab 2: Theo tháng ----------
+    with tab_thang:
+        st.subheader("Biểu đồ tổng hợp theo tháng")
+        # Compute monthly summary within the filtered date range
+        month_df = filtered_revenue.copy()
+        month_df['Year'] = month_df['Ngày'].dt.year
+        month_df['Month'] = month_df['Ngày'].dt.month
+        month_summary = month_df.groupby(['Year', 'Month']).agg({
+            'Đơn hàng': 'sum',
+            'Doanh thu': 'sum',
+            'Doanh thu thuần': 'sum',
+            'Giảm giá': 'sum',
+            'Hoàn trả': 'sum'
+        }).reset_index()
+        # Map month numbers to names
+        month_names_local = {1:'Tháng 1',2:'Tháng 2',3:'Tháng 3',4:'Tháng 4',5:'Tháng 5',6:'Tháng 6',7:'Tháng 7',8:'Tháng 8',9:'Tháng 9',10:'Tháng 10',11:'Tháng 11',12:'Tháng 12'}
+        month_summary['Tháng'] = month_summary['Month'].map(month_names_local)
+        # Calculate AOV and discount ratio
+        month_summary['AOV'] = month_summary.apply(lambda row: row['Doanh thu thuần']/row['Đơn hàng'] if row['Đơn hàng']>0 else 0, axis=1)
+        month_summary['Tỷ lệ giảm giá'] = month_summary.apply(lambda row: abs(row['Giảm giá'])/row['Doanh thu']*100 if row['Doanh thu']>0 else 0, axis=1)
+        # Charts side by side
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            chart1 = alt.Chart(month_summary).mark_bar().encode(
+                x=alt.X('Tháng:N', sort=list(month_names_local.values()), title='Tháng'),
+                y=alt.Y('Doanh thu thuần:Q', title='Doanh thu thuần (₫)'),
+                tooltip=['Tháng:N', 'Doanh thu thuần:Q']
+            ).properties(height=300, title='Doanh thu thuần theo tháng')
+            st.altair_chart(chart1, use_container_width=True)
+        with col2:
+            chart2 = alt.Chart(month_summary).mark_bar(color='#ff7f0e').encode(
+                x=alt.X('Tháng:N', sort=list(month_names_local.values()), title='Tháng'),
+                y=alt.Y('Đơn hàng:Q', title='Đơn hàng'),
+                tooltip=['Tháng:N', 'Đơn hàng:Q']
+            ).properties(height=300, title='Đơn hàng theo tháng')
+            st.altair_chart(chart2, use_container_width=True)
+        with col3:
+            chart3 = alt.Chart(month_summary).mark_bar(color='#2ca02c').encode(
+                x=alt.X('Tháng:N', sort=list(month_names_local.values()), title='Tháng'),
+                y=alt.Y('AOV:Q', title='AOV (₫)'),
+                tooltip=['Tháng:N', 'AOV:Q']
+            ).properties(height=300, title='AOV theo tháng')
+            st.altair_chart(chart3, use_container_width=True)
+        # Stacked column: Doanh thu & Giảm giá theo tháng
+        stacked_df = month_summary[['Tháng', 'Doanh thu', 'Giảm giá']].melt('Tháng', var_name='Loại', value_name='Giá trị')
+        stacked_chart = alt.Chart(stacked_df).mark_bar().encode(
+            x=alt.X('Tháng:N', sort=list(month_names_local.values()), title='Tháng'),
+            y=alt.Y('Giá trị:Q', title='Giá trị (₫)'),
+            color=alt.Color('Loại:N', scale=alt.Scale(domain=['Doanh thu','Giảm giá'], range=['#1f77b4','#d62728']), title='Loại'),
+            tooltip=['Tháng:N', 'Loại:N', 'Giá trị:Q']
+        ).properties(height=300, title='Doanh thu & Giảm giá theo tháng')
+        st.altair_chart(stacked_chart, use_container_width=True)
+        # Line chart for Hoàn trả và Tỷ lệ giảm giá
+        line_returns = alt.Chart(month_summary).mark_line(color='#9467bd').encode(
+            x=alt.X('Tháng:N', sort=list(month_names_local.values()), title='Tháng'),
+            y=alt.Y('Hoàn trả:Q', title='Hoàn trả (₫)', axis=alt.Axis(titleColor='#9467bd')),
+            tooltip=['Tháng:N', 'Hoàn trả:Q']
+        )
+        line_discount_ratio = alt.Chart(month_summary).mark_line(color='#8c564b').encode(
+            x=alt.X('Tháng:N', sort=list(month_names_local.values()), title='Tháng'),
+            y=alt.Y('Tỷ lệ giảm giá:Q', title='Tỷ lệ giảm giá (%)', axis=alt.Axis(titleColor='#8c564b')),
+            tooltip=['Tháng:N', 'Tỷ lệ giảm giá:Q']
+        )
+        layered = alt.layer(line_returns, line_discount_ratio).resolve_scale(y='independent').properties(height=300, title='Hoàn trả & Tỷ lệ giảm giá theo tháng')
+        st.altair_chart(layered, use_container_width=True)
+
+    # ---------- Tab 3: Theo kênh ----------
+    with tab_kenh:
+        st.subheader("Biểu đồ theo kênh bán hàng")
+        # Prepare channel data
+        channel_df = sales_df.copy()
+        channel_df['AOV'] = channel_df.apply(lambda row: row['Doanh thu thuần']/row['Đơn hàng'] if row['Đơn hàng']>0 else 0, axis=1)
+        # Pie/Donut chart – Tỷ trọng Doanh thu thuần theo kênh
+        pie_fig = px.pie(
+            channel_df,
+            names='Kênh bán hàng',
+            values='Doanh thu thuần',
+            hole=0.4,
+            title='Tỷ trọng Doanh thu thuần theo kênh'
+        )
+        st.plotly_chart(pie_fig, use_container_width=True)
+        # Bar charts: Doanh thu thuần, Đơn hàng, AOV, Giảm giá theo kênh
+        bar1, bar2, bar3, bar4 = st.columns(4)
+        with bar1:
+            chart_rev = alt.Chart(channel_df).mark_bar().encode(
+                x=alt.X('Kênh bán hàng:N', title='Kênh'),
+                y=alt.Y('Doanh thu thuần:Q', title='Doanh thu thuần (₫)'),
+                color=alt.Color('Kênh bán hàng:N', legend=None),
+                tooltip=['Kênh bán hàng:N', 'Doanh thu thuần:Q']
+            ).properties(height=250, title='Doanh thu thuần')
+            st.altair_chart(chart_rev, use_container_width=True)
+        with bar2:
+            chart_orders = alt.Chart(channel_df).mark_bar(color='#ff7f0e').encode(
+                x=alt.X('Kênh bán hàng:N', title='Kênh'),
+                y=alt.Y('Đơn hàng:Q', title='Đơn hàng'),
+                tooltip=['Kênh bán hàng:N', 'Đơn hàng:Q']
+            ).properties(height=250, title='Đơn hàng')
+            st.altair_chart(chart_orders, use_container_width=True)
+        with bar3:
+            chart_aov = alt.Chart(channel_df).mark_bar(color='#2ca02c').encode(
+                x=alt.X('Kênh bán hàng:N', title='Kênh'),
+                y=alt.Y('AOV:Q', title='AOV (₫)'),
+                tooltip=['Kênh bán hàng:N', 'AOV:Q']
+            ).properties(height=250, title='AOV')
+            st.altair_chart(chart_aov, use_container_width=True)
+        with bar4:
+            chart_discount = alt.Chart(channel_df).mark_bar(color='#d62728').encode(
+                x=alt.X('Kênh bán hàng:N', title='Kênh'),
+                y=alt.Y('Giảm giá:Q', title='Giảm giá (₫)'),
+                tooltip=['Kênh bán hàng:N', 'Giảm giá:Q']
+            ).properties(height=250, title='Giảm giá')
+            st.altair_chart(chart_discount, use_container_width=True)
+
+    # ---------- Tab 4: Phân phối ----------
+    with tab_phanphoi:
+        st.subheader("Phân phối dữ liệu")
+        # Histogram – Phân phối Doanh thu thuần theo ngày
+        hist1 = alt.Chart(filtered_revenue).mark_bar().encode(
+            x=alt.X('Doanh thu thuần:Q', bin=alt.Bin(maxbins=30), title='Doanh thu thuần (₫)'),
+            y=alt.Y('count():Q', title='Số ngày'),
+            tooltip=['count()']
+        ).properties(height=300, title='Phân phối Doanh thu thuần')
+        # Histogram – Phân phối Đơn hàng theo ngày
+        hist2 = alt.Chart(filtered_revenue).mark_bar(color='#ff7f0e').encode(
+            x=alt.X('Đơn hàng:Q', bin=alt.Bin(maxbins=30), title='Đơn hàng'),
+            y=alt.Y('count():Q', title='Số ngày'),
+            tooltip=['count()']
+        ).properties(height=300, title='Phân phối Đơn hàng')
+        col_hist1, col_hist2 = st.columns(2)
+        with col_hist1:
+            st.altair_chart(hist1, use_container_width=True)
+        with col_hist2:
+            st.altair_chart(hist2, use_container_width=True)
+        # Scatter plot – Đơn hàng vs Doanh thu thuần
+        scatter = alt.Chart(filtered_revenue).mark_circle(opacity=0.6).encode(
+            x=alt.X('Đơn hàng:Q', title='Đơn hàng'),
+            y=alt.Y('Doanh thu thuần:Q', title='Doanh thu thuần (₫)'),
+            tooltip=['Ngày:T', 'Đơn hàng:Q', 'Doanh thu thuần:Q']
+        ).properties(height=400, title='Đơn hàng vs Doanh thu thuần')
+        st.altair_chart(scatter, use_container_width=True)
+
+
+
+
+    # Xu hướng theo ngày sẽ được hiển thị trong tab "Theo ngày" bên dưới
 
     # (Phân tích sâu hơn đã được rút gọn để tập trung vào các biểu đồ chính)
 
