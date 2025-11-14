@@ -122,6 +122,40 @@ def preprocess_revenue(df: pd.DataFrame) -> pd.DataFrame:
     return processed
 
 
+# ----------------------------------------------------------------------
+# Utility functions
+def format_currency(value: float) -> str:
+    """Format a number into a more readable Vietnamese currency string.
+
+    If the absolute value is greater than one million, it will be
+    expressed in "triệu" with one decimal place.  Otherwise the
+    number is formatted with thousand separators.  A trailing '₫'
+    symbol is appended in both cases.
+
+    Parameters
+    ----------
+    value : float
+        The monetary value to format.
+
+    Returns
+    -------
+    str
+        A formatted string representing the currency.
+    """
+    try:
+        val = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    abs_val = abs(val)
+    if abs_val >= 1_000_000:
+        formatted = f"{val / 1_000_000:.1f} triệu ₫"
+    elif abs_val >= 1_000:
+        formatted = f"{val/1_000:.1f} nghìn ₫"
+    else:
+        formatted = f"{val:.0f} ₫"
+    return formatted
+
+
 def main():
     # Basic page configuration
     st.set_page_config(
@@ -137,17 +171,45 @@ def main():
     # Sidebar — filters and options
     with st.sidebar:
         st.header("Bộ lọc")
-        # Date range filter
+        # Determine overall date range from the data
         min_date = revenue_df['Ngày'].min().date()
         max_date = revenue_df['Ngày'].max().date()
-        default_start = min_date
-        default_end = max_date
+        # Date range filter with robust handling of single date selection
+        st.write("Chọn khoảng thời gian:")
         date_range = st.date_input(
-            "Chọn khoảng thời gian",
-            value=(default_start, default_end),
+            label="",
+            value=(min_date, max_date),
             min_value=min_date,
-            max_value=max_date
+            max_value=max_date,
+            help="Chọn ngày bắt đầu và ngày kết thúc. Nếu chỉ chọn một ngày, app sẽ tự động dùng ngày đó cho cả hai."
         )
+        # Normalise the date selection to always have two dates
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            start_date, end_date = date_range
+            if end_date is None:
+                end_date = start_date
+        else:
+            # If a single date is returned (old streamlit versions)
+            start_date = date_range
+            end_date = date_range
+        # Quick month selection: build list of year-month strings
+        month_options = sorted(revenue_df['Ngày'].dt.strftime('%Y-%m').unique())
+        quick_month = st.selectbox(
+            "Hoặc chọn nhanh theo tháng",
+            options=["--"] + month_options,
+            index=0
+        )
+        if quick_month != "--":
+            try:
+                year, month = map(int, quick_month.split('-'))
+                start_date = date(year, month, 1)
+                # Compute end date as last day of month
+                if month == 12:
+                    end_date = date(year, 12, 31)
+                else:
+                    end_date = date(year, month + 1, 1) - pd.Timedelta(days=1)
+            except Exception:
+                pass
         # Metric selection for time series plot
         metric_options = {
             'Doanh thu': 'Doanh thu',
@@ -164,10 +226,11 @@ def main():
         # Chart type selection for the time series
         chart_type = st.radio(
             "Kiểu biểu đồ thời gian",
-            options=["Đường", "Cột"]
+            options=["Đường", "Cột"],
+            index=0
         )
         st.markdown("---")
-        st.caption("Chọn các chỉ số và khoảng thời gian để hiển thị các biểu đồ phù hợp.")
+        st.caption("Lọc dữ liệu theo ngày hoặc theo tháng và chọn chỉ số để hiển thị biểu đồ.")
 
     # Main content
     # Display logo at the top of the page
@@ -189,7 +252,8 @@ def main():
     )
 
     # Filter revenue data by selected date range
-    start_date, end_date = date_range
+    # Use start_date and end_date from the sidebar filter; they are defined there
+    # Ensure both dates are of type datetime.date
     mask = (revenue_df['Ngày'].dt.date >= start_date) & (revenue_df['Ngày'].dt.date <= end_date)
     filtered_revenue = revenue_df.loc[mask]
 
@@ -206,87 +270,12 @@ def main():
     # Display KPI summary cards
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     kpi1.metric("Tổng đơn hàng", f"{total_orders:,}")
-    kpi2.metric("Tổng doanh thu", f"{total_revenue:,.0f} ₫")
-    kpi3.metric("Doanh thu thuần", f"{total_net_revenue:,.0f} ₫")
-    kpi4.metric("Tổng lợi nhuận", f"{total_profit:,.0f} ₫", f"{average_profit_margin:.1f}%")
-
-    st.markdown("## Tổng quan theo kênh bán hàng")
-    # Bar chart for aggregated sales by channel
-    channel_chart = alt.Chart(sales_df).transform_fold(
-        ['Đơn hàng', 'Doanh thu', 'Doanh thu thuần', 'Tổng lợi nhuận'],
-        as_=['Chỉ số', 'Giá trị']
-    ).encode(
-        x=alt.X('Kênh bán hàng:N', title='Kênh bán hàng'),
-        y=alt.Y('Giá trị:Q', title='Giá trị (₫)', stack=None),
-        color='Chỉ số:N',
-        column=alt.Column('Chỉ số:N', title='')
-    ).mark_bar().properties(
-        width=120,
-        height=300
-    )
-    st.altair_chart(channel_chart, use_container_width=True)
-
-    st.markdown("## Xu hướng theo thời gian")
-    # Create time series chart for the selected metric
-    chart_data = filtered_revenue[['Ngày', selected_metric]].rename(columns={selected_metric: 'Giá trị'})
-    chart_data = chart_data.sort_values('Ngày')
-    if chart_type == "Đường":
-        # Line chart using altair
-        line_chart = alt.Chart(chart_data).mark_line(point=True).encode(
-            x=alt.X('Ngày:T', title='Ngày'),
-            y=alt.Y('Giá trị:Q', title=selected_metric_label),
-            tooltip=['Ngày:T', 'Giá trị:Q']
-        ).interactive().properties(height=400)
-        st.altair_chart(line_chart, use_container_width=True)
-    else:
-        # Column/bar chart using altair
-        bar_chart = alt.Chart(chart_data).mark_bar().encode(
-            x=alt.X('Ngày:T', title='Ngày'),
-            y=alt.Y('Giá trị:Q', title=selected_metric_label),
-            tooltip=['Ngày:T', 'Giá trị:Q']
-        ).interactive().properties(height=400)
-        st.altair_chart(bar_chart, use_container_width=True)
-
-    st.markdown("## Phân tích sâu hơn")
-    # Correlation scatter plot: Orders vs Revenue
-    scatter_fig = px.scatter(
-        filtered_revenue,
-        x='Đơn hàng',
-        y='Doanh thu thuần',
-        size='Tổng lợi nhuận',
-        color='Profit margin (%)',
-        hover_data=['Ngày'],
-        title='Mối quan hệ giữa số đơn hàng và doanh thu thuần',
-        labels={'Đơn hàng': 'Số đơn hàng', 'Doanh thu thuần': 'Doanh thu thuần (₫)', 'Profit margin (%)': 'Biên lợi nhuận (%)'}
-    )
-    st.plotly_chart(scatter_fig, use_container_width=True)
-
-    st.markdown("### Dữ liệu chi tiết")
-    # Show the filtered data in a table with some styling
-    styled_df = filtered_revenue[['Ngày', 'Đơn hàng', 'Doanh thu', 'Giảm giá', 'Doanh thu thuần', 'Tổng lợi nhuận', 'Profit margin (%)']].copy()
-    styled_df['Ngày'] = styled_df['Ngày'].dt.strftime('%d/%m/%Y')
-    st.dataframe(styled_df.style.format({
-        'Đơn hàng': '{:,.0f}',
-        'Doanh thu': '{:,.0f} ₫',
-        'Giảm giá': '{:,.0f} ₫',
-        'Doanh thu thuần': '{:,.0f} ₫',
-        'Tổng lợi nhuận': '{:,.0f} ₫',
-        'Profit margin (%)': '{:.1f}%'
-    }))
-
-    st.markdown("#### Tải xuống dữ liệu")
-    # Provide a download button for the filtered data
-    csv_data = filtered_revenue.to_csv(index=False, encoding='utf-8-sig')
-    st.download_button(
-        label="Tải dữ liệu CSV",
-        data=csv_data,
-        file_name=f"Keos_Doanhthu_{start_date}_den_{end_date}.csv",
-        mime="text/csv"
-    )
+    kpi2.metric("Tổng doanh thu", format_currency(total_revenue))
+    kpi3.metric("Doanh thu thuần", format_currency(total_net_revenue))
+    kpi4.metric("Tổng lợi nhuận", format_currency(total_profit), f"{average_profit_margin:.1f}%")
 
     # ------------------------------------------------------------------
-    # Monthly analysis section
-    # Aggregate data by month and year to allow comparison across months
+    # Monthly analysis section (moved before channel overview)
     st.markdown("## Doanh thu theo tháng")
     # Create month and year columns
     monthly_df = revenue_df.copy()
@@ -353,7 +342,90 @@ def main():
                 f"Ngược lại, mức sụt giảm lớn nhất là từ **{month_names[int(decrease_month['Month']-1)] if decrease_month['Month']>1 else month_names[12]}"
                 f" đến {month_names[int(decrease_month['Month'])]} {int(decrease_month['Year'])}**, giảm **{abs(dec_mom):.1f}%** so với tháng trước."
             )
-    st.markdown("---")
+
+
+    st.markdown("## Tổng quan theo kênh bán hàng")
+    # Allow the user to choose which metric to compare across sales channels
+    channel_metric_options = {
+        'Đơn hàng': 'Đơn hàng',
+        'Doanh thu': 'Doanh thu',
+        'Doanh thu thuần': 'Doanh thu thuần',
+        'Tổng lợi nhuận': 'Tổng lợi nhuận'
+    }
+    selected_channel_metric_label = st.selectbox(
+        "Chọn chỉ số để so sánh theo kênh",
+        options=list(channel_metric_options.keys()),
+        index=2  # default to Doanh thu thuần
+    )
+    selected_channel_metric = channel_metric_options[selected_channel_metric_label]
+    # Prepare data for chart: sort descending by selected metric
+    channel_data = sales_df[['Kênh bán hàng', selected_channel_metric]].copy()
+    channel_data = channel_data.sort_values(selected_channel_metric, ascending=False)
+    # Create bar chart for selected metric
+    channel_chart = alt.Chart(channel_data).mark_bar().encode(
+        x=alt.X('Kênh bán hàng:N', title='Kênh bán hàng', sort=list(channel_data['Kênh bán hàng'])),
+        y=alt.Y(f'{selected_channel_metric}:Q', title=selected_channel_metric_label),
+        color=alt.Color('Kênh bán hàng:N', legend=None),
+        tooltip=['Kênh bán hàng:N', f'{selected_channel_metric}:Q']
+    ).properties(height=400)
+    st.altair_chart(channel_chart, use_container_width=True)
+    # Provide a narrative comparison of channels
+    top_channel = channel_data.iloc[0]
+    bottom_channel = channel_data.iloc[-1]
+    st.write(
+        f"Kênh **{top_channel['Kênh bán hàng']}** đang dẫn đầu về {selected_channel_metric_label.lower()} "
+        f"với giá trị đạt **{top_channel[selected_channel_metric]:,.0f}**. "
+        f"Trong khi đó, kênh **{bottom_channel['Kênh bán hàng']}** có {selected_channel_metric_label.lower()} thấp nhất ("
+        f"**{bottom_channel[selected_channel_metric]:,.0f}**)."
+    )
+
+    st.markdown(f"## Xu hướng theo ngày – {selected_metric_label}")
+    st.caption("Biểu đồ dưới đây thể hiện sự thay đổi của chỉ số được chọn theo từng ngày trong khoảng thời gian bạn lọc ở bên trái.")
+    # Create time series chart for the selected metric
+    chart_data = filtered_revenue[['Ngày', selected_metric]].rename(columns={selected_metric: 'Giá trị'})
+    chart_data = chart_data.sort_values('Ngày')
+    if chart_type == "Đường":
+        # Line chart using altair
+        line_chart = alt.Chart(chart_data).mark_line(point=True).encode(
+            x=alt.X('Ngày:T', title='Ngày'),
+            y=alt.Y('Giá trị:Q', title=selected_metric_label),
+            tooltip=['Ngày:T', 'Giá trị:Q']
+        ).interactive().properties(height=400)
+        st.altair_chart(line_chart, use_container_width=True)
+    else:
+        # Column/bar chart using altair
+        bar_chart = alt.Chart(chart_data).mark_bar().encode(
+            x=alt.X('Ngày:T', title='Ngày'),
+            y=alt.Y('Giá trị:Q', title=selected_metric_label),
+            tooltip=['Ngày:T', 'Giá trị:Q']
+        ).interactive().properties(height=400)
+        st.altair_chart(bar_chart, use_container_width=True)
+
+    # (Phân tích sâu hơn đã được rút gọn để tập trung vào các biểu đồ chính)
+
+    st.markdown("### Dữ liệu chi tiết")
+    # Show the filtered data in a table with some styling
+    styled_df = filtered_revenue[['Ngày', 'Đơn hàng', 'Doanh thu', 'Giảm giá', 'Doanh thu thuần', 'Tổng lợi nhuận', 'Profit margin (%)']].copy()
+    styled_df['Ngày'] = styled_df['Ngày'].dt.strftime('%d/%m/%Y')
+    st.dataframe(styled_df.style.format({
+        'Đơn hàng': '{:,.0f}',
+        'Doanh thu': '{:,.0f} ₫',
+        'Giảm giá': '{:,.0f} ₫',
+        'Doanh thu thuần': '{:,.0f} ₫',
+        'Tổng lợi nhuận': '{:,.0f} ₫',
+        'Profit margin (%)': '{:.1f}%'
+    }))
+
+    st.markdown("#### Tải xuống dữ liệu")
+    # Provide a download button for the filtered data
+    csv_data = filtered_revenue.to_csv(index=False, encoding='utf-8-sig')
+    st.download_button(
+        label="Tải dữ liệu CSV",
+        data=csv_data,
+        file_name=f"Keos_Doanhthu_{start_date}_den_{end_date}.csv",
+        mime="text/csv"
+    )
+
 
 
 if __name__ == "__main__":
