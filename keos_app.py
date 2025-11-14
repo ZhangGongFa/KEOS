@@ -284,6 +284,77 @@ def main():
         mime="text/csv"
     )
 
+    # ------------------------------------------------------------------
+    # Monthly analysis section
+    # Aggregate data by month and year to allow comparison across months
+    st.markdown("## Doanh thu theo tháng")
+    # Create month and year columns
+    monthly_df = revenue_df.copy()
+    monthly_df['Year'] = monthly_df['Ngày'].dt.year
+    monthly_df['Month'] = monthly_df['Ngày'].dt.month
+    # Aggregate metrics per month/year
+    monthly_summary = monthly_df.groupby(['Year', 'Month']).agg({
+        'Đơn hàng': 'sum',
+        'Doanh thu': 'sum',
+        'Doanh thu thuần': 'sum',
+        'Tổng lợi nhuận': 'sum'
+    }).reset_index()
+    # Map month numbers to names in Vietnamese
+    month_names = {
+        1: 'Tháng 1', 2: 'Tháng 2', 3: 'Tháng 3', 4: 'Tháng 4',
+        5: 'Tháng 5', 6: 'Tháng 6', 7: 'Tháng 7', 8: 'Tháng 8',
+        9: 'Tháng 9', 10: 'Tháng 10', 11: 'Tháng 11', 12: 'Tháng 12'
+    }
+    monthly_summary['MonthName'] = monthly_summary['Month'].map(month_names)
+    # Sort by Year and Month for consistent ordering
+    monthly_summary = monthly_summary.sort_values(['Year', 'Month'])
+    # Allow users to select which months to display
+    available_months = monthly_summary['MonthName'].unique().tolist()
+    selected_months = st.multiselect(
+        "Chọn tháng để so sánh",
+        options=available_months,
+        default=available_months
+    )
+    # Filter data based on selected months
+    comparison_df = monthly_summary[monthly_summary['MonthName'].isin(selected_months)].copy()
+    # Build the comparison bar chart (grouped by year, colored by month)
+    monthly_chart = alt.Chart(comparison_df).mark_bar().encode(
+        x=alt.X('Year:N', title='Năm'),
+        y=alt.Y('Doanh thu thuần:Q', title='Doanh thu thuần (₫)'),
+        color=alt.Color('MonthName:N', title='Tháng'),
+        tooltip=['Year:N', 'MonthName:N', 'Doanh thu thuần:Q']
+    ).properties(height=400)
+    st.altair_chart(monthly_chart, use_container_width=True)
+    # Story telling / narrative insight
+    # Identify the month with the highest and lowest revenue
+    if not monthly_summary.empty:
+        highest = monthly_summary.loc[monthly_summary['Doanh thu thuần'].idxmax()]
+        lowest = monthly_summary.loc[monthly_summary['Doanh thu thuần'].idxmin()]
+        st.markdown("### Đánh giá xu hướng")
+        st.write(
+            f"Trong toàn bộ dữ liệu, **{month_names[int(highest['Month'])]} {int(highest['Year'])}** "
+            f"đạt doanh thu thuần cao nhất với khoảng **{highest['Doanh thu thuần']:,.0f} ₫**. "
+            f"Ngược lại, **{month_names[int(lowest['Month'])]} {int(lowest['Year'])}** "
+            f"có doanh thu thuần thấp nhất với **{lowest['Doanh thu thuần']:,.0f} ₫**."
+        )
+        # Compute month-on-month change for each year
+        monthly_summary['Prev_Revenue'] = monthly_summary.groupby('Year')['Doanh thu thuần'].shift(1)
+        monthly_summary['MoM_Change'] = (monthly_summary['Doanh thu thuần'] - monthly_summary['Prev_Revenue']) / monthly_summary['Prev_Revenue'] * 100
+        # Remove rows where previous revenue is NaN
+        changes = monthly_summary.dropna(subset=['MoM_Change'])
+        if not changes.empty:
+            increase_month = changes.loc[changes['MoM_Change'].idxmax()]
+            decrease_month = changes.loc[changes['MoM_Change'].idxmin()]
+            inc_mom = increase_month['MoM_Change']
+            dec_mom = decrease_month['MoM_Change']
+            st.write(
+                f"Tăng trưởng doanh thu thuần mạnh nhất diễn ra từ **{month_names[int(increase_month['Month']-1)] if increase_month['Month']>1 else month_names[12]}"
+                f" đến {month_names[int(increase_month['Month'])]} {int(increase_month['Year'])}**, tăng khoảng **{inc_mom:.1f}%** so với tháng trước. "
+                f"Ngược lại, mức sụt giảm lớn nhất là từ **{month_names[int(decrease_month['Month']-1)] if decrease_month['Month']>1 else month_names[12]}"
+                f" đến {month_names[int(decrease_month['Month'])]} {int(decrease_month['Year'])}**, giảm **{abs(dec_mom):.1f}%** so với tháng trước."
+            )
+    st.markdown("---")
+
 
 if __name__ == "__main__":
     main()
